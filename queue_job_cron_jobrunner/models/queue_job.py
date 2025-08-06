@@ -94,11 +94,13 @@ class QueueJob(models.Model):
             job.store()
             _logger.debug("%s postponed", job)
 
-        except (FailedJobError, Exception):
+        except (FailedJobError, Exception) as orig_exception:
             with StringIO() as buff:
                 traceback.print_exc(file=buff)
-                _logger.error(buff.getvalue())
-                job.set_failed(exc_info=buff.getvalue())
+                traceback_txt = buff.getvalue()
+                _logger.error(traceback_txt)
+                vals = self._get_failure_values(job, traceback_txt, orig_exception)
+                job.set_failed(**vals)
                 job.store()
 
         if commit:  # pragma: no cover
@@ -108,6 +110,18 @@ class QueueJob(models.Model):
         _logger.debug("%s enqueue depends started", job)
         job.enqueue_waiting()
         _logger.debug("%s enqueue depends done", job)
+
+    def _get_failure_values(self, job, traceback_txt, orig_exception):
+        """Collect relevant data from exception."""
+        exception_name = orig_exception.__class__.__name__
+        if hasattr(orig_exception, "__module__"):
+            exception_name = orig_exception.__module__ + "." + exception_name
+        exc_message = getattr(orig_exception, "name", str(orig_exception))
+        return {
+            "exc_info": traceback_txt,
+            "exc_name": exception_name,
+            "exc_message": exc_message,
+        }
 
     @api.model
     def _job_runner(self, commit=True):
